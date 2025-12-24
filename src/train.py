@@ -9,9 +9,14 @@ Usage:
 import argparse
 import torch
 from datasets import load_dataset
-from transformers import TrainingArguments
-from unsloth import FastLanguageModel
-from trl import SFTTrainer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainingArguments,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTTrainer, SFTConfig
 
 
 def verify_gpu():
@@ -30,38 +35,68 @@ def load_model(model_name: str, max_seq_length: int = 2048):
     """Load model with 4-bit quantization for memory efficiency."""
     print(f"Loading model: {model_name}")
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=max_seq_length,
-        dtype=None,  # Auto-detect
-        load_in_4bit=True,  # Use 4-bit quantization
+    # 4-bit quantization config
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
     )
 
-    # Add LoRA adapters
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,  # LoRA rank - higher = more capacity but more memory
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    # Load model with quantization
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+    )
+
+    # Prepare for k-bit training
+    model = prepare_model_for_kbit_training(model)
+
+    # LoRA config
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=16,
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
         ],
-        lora_alpha=16,
-        lora_dropout=0,  # Optimized for speed
+        lora_dropout=0.05,
         bias="none",
-        use_gradient_checkpointing="unsloth",  # Save memory
-        random_state=42,
+        task_type="CAUSAL_LM",
     )
+
+    # Apply LoRA
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
 
     return model, tokenizer
 
 
 def format_instruction(example):
     """Format dataset example into instruction format."""
-    return f"""### Instruction:
+    # Handle different dataset formats
+    if "instruction" in example and "response" in example:
+        return f"""### Instruction:
 {example['instruction']}
 
 ### Response:
 {example['response']}"""
+    elif "text" in example:
+        return example["text"]
+    elif "prompt" in example and "completion" in example:
+        return f"{example['prompt']}{example['completion']}"
+    else:
+        # For openassistant-guanaco format
+        return example.get("text", str(example))
 
 
 def train(
@@ -89,22 +124,24 @@ def train(
 
     print(f"Dataset size: {len(dataset)} examples")
 
-    # Training arguments
-    training_args = TrainingArguments(
+    # Training config using SFTConfig
+    training_args = SFTConfig(
         output_dir=output_dir,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=10,
         num_train_epochs=num_epochs,
         learning_rate=learning_rate,
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
+        bf16=True,
         logging_steps=10,
         save_strategy="epoch",
         optim="adamw_8bit",
         weight_decay=0.01,
         lr_scheduler_type="linear",
         seed=42,
+        max_seq_length=max_seq_length,
+        packing=False,
+        dataset_text_field="text",
     )
 
     # Initialize trainer
@@ -112,8 +149,6 @@ def train(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
-        max_seq_length=max_seq_length,
-        formatting_func=format_instruction,
         args=training_args,
     )
 

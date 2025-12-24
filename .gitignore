@@ -50,3 +50,10 @@ runs/
 
 # HuggingFace cache
 .cache/
+
+# Project notes (local only)
+NOTES.md
+claude.md
+
+# Unsloth cache
+unsloth_compiled_cache/

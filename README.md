@@ -5,12 +5,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CUDA 12.8](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 
-A memory-efficient framework for fine-tuning large language models on consumer GPUs using QLoRA and Unsloth optimizations. Designed for NVIDIA RTX 5090 (Blackwell architecture) but compatible with RTX 30/40 series.
+A memory-efficient framework for fine-tuning large language models on consumer GPUs using QLoRA. Designed for NVIDIA RTX 5090 (Blackwell architecture) but compatible with RTX 30/40 series.
 
 ## Features
 
 - **Memory Efficient**: Fine-tune 7B parameter models with only ~16GB VRAM using 4-bit quantization
-- **2.5x Faster Training**: Leverages Unsloth's custom CUDA kernels for optimized performance
+- **QLoRA Training**: Parameter-efficient fine-tuning with Low-Rank Adaptation
 - **RTX 5090 Ready**: Full support for Blackwell architecture (sm_120) via PyTorch nightly
 - **Flexible**: Works with Mistral, Llama, Qwen, and other HuggingFace models
 - **Easy to Use**: Simple CLI interface for training and inference
@@ -102,6 +102,8 @@ Training data should be in JSONL format with instruction-response pairs:
 {"instruction": "Write a Python function to sort a list", "response": "def sort_list(lst):\n    return sorted(lst)"}
 ```
 
+Or use HuggingFace datasets with a `text` field directly.
+
 ## Training Configuration
 
 | Parameter | Default | Description |
@@ -120,15 +122,16 @@ Training data should be in JSONL format with instruction-response pairs:
 - **LoRA Rank (r)**: 16
 - **LoRA Alpha**: 16
 - **Target Modules**: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
-- **Quantization**: 4-bit NF4
-- **Gradient Checkpointing**: Enabled
+- **Quantization**: 4-bit NF4 with double quantization
+- **Compute dtype**: BFloat16
 
-### Optimizations
+### Stack
 
-- **Unsloth**: Custom fused kernels for 2-5x speedup
-- **8-bit AdamW**: Reduced optimizer memory footprint
-- **BF16/FP16**: Automatic mixed precision based on hardware
-- **Gradient Accumulation**: Effective batch size of 8 with batch_size=2
+- **Transformers**: Model loading and tokenization
+- **PEFT**: Parameter-efficient fine-tuning (LoRA)
+- **BitsAndBytes**: 4-bit quantization
+- **TRL**: Supervised fine-tuning trainer
+- **Datasets**: Data loading and processing
 
 ## Hardware Requirements
 
@@ -168,10 +171,10 @@ Fine-tuning Mistral 7B on 10K instruction pairs:
 
 ## References
 
-- [Unsloth Documentation](https://docs.unsloth.ai/)
 - [QLoRA Paper](https://arxiv.org/abs/2305.14314)
 - [LoRA Paper](https://arxiv.org/abs/2106.09685)
 - [Hugging Face TRL](https://huggingface.co/docs/trl)
+- [PEFT Documentation](https://huggingface.co/docs/peft)
 
 ## License
 
