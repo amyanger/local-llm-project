@@ -1,0 +1,52 @@
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Model checkpoints (large files)
+models/checkpoints/
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Data files (may be large)
+data/processed/
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+wandb/
+runs/
+
+# Environment variables
+.env
+.env.local
+
+# HuggingFace cache
+.cache/
