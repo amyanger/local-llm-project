@@ -1,9 +1,16 @@
 """
-Run inference with fine-tuned model.
+Run inference with fine-tuned model (ChatML format).
 
 Usage:
-    python src/inference.py --model models/checkpoints --prompt "What is Python?"
+    python src/inference.py --model models/openhermes-chat --prompt "What is Python?"
 """
+
+import os
+from pathlib import Path
+
+# Configure HuggingFace to use local cache (D: drive) and disable hf_transfer
+os.environ.setdefault("HF_HOME", str(Path(__file__).parent.parent / ".cache"))
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 import argparse
 import torch
@@ -31,15 +38,20 @@ def generate(
     prompt: str,
     max_new_tokens: int = 512,
     temperature: float = 0.7,
+    system_prompt: str = "You are a helpful, friendly assistant.",
 ):
-    """Generate response for a prompt."""
-    formatted_prompt = f"""### Instruction:
-{prompt}
-
-### Response:
+    """Generate response for a prompt using ChatML format."""
+    formatted_prompt = f"""<|im_start|>system
+{system_prompt}<|im_end|>
+<|im_start|>user
+{prompt}<|im_end|>
+<|im_start|>assistant
 """
 
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to("cuda")
+
+    # Stop sequences for ChatML
+    stop_strings = ["<|im_start|>", "<|im_end|>", "<|im_start|>user"]
 
     with torch.no_grad():
         outputs = model.generate(
@@ -47,18 +59,31 @@ def generate(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             do_sample=True,
-            top_p=0.95,
-            top_k=50,
+            top_p=0.9,
+            top_k=40,
             pad_token_id=tokenizer.eos_token_id,
+            repetition_penalty=1.1,
         )
 
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=False)
 
-    # Extract just the response part
-    if "### Response:" in response:
-        response = response.split("### Response:")[-1].strip()
+    # Extract assistant response from ChatML format
+    if "<|im_start|>assistant" in response:
+        response = response.split("<|im_start|>assistant")[-1]
 
-    return response
+    # Clean up end tokens
+    if "<|im_end|>" in response:
+        response = response.split("<|im_end|>")[0]
+
+    # Remove any remaining special tokens
+    response = response.replace("<|im_start|>", "").replace("<|im_end|>", "")
+
+    # Cut off at any stop sequences
+    for stop in stop_strings:
+        if stop in response:
+            response = response.split(stop)[0]
+
+    return response.strip()
 
 
 def interactive_mode(model, tokenizer):
@@ -83,7 +108,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="models/checkpoints",
+        default="models/openhermes-chat",
         help="Path to fine-tuned model",
     )
     parser.add_argument(

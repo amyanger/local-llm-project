@@ -3,8 +3,15 @@ Local LLM Fine-tuning Script
 Uses QLoRA for memory-efficient training on RTX 5090
 
 Usage:
-    python src/train.py --model mistralai/Mistral-7B-v0.1 --dataset data/processed/train.jsonl
+    python src/train.py --model teknium/OpenHermes-2.5-Mistral-7B --dataset mlabonne/ultrachat_200k
 """
+
+import os
+from pathlib import Path
+
+# Configure HuggingFace to use local cache (D: drive) and disable hf_transfer
+os.environ.setdefault("HF_HOME", str(Path(__file__).parent.parent / ".cache"))
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 import argparse
 import torch
@@ -81,21 +88,27 @@ def load_model(model_name: str, max_seq_length: int = 2048):
     return model, tokenizer
 
 
-def format_instruction(example):
-    """Format dataset example into instruction format."""
-    # Handle different dataset formats
-    if "instruction" in example and "response" in example:
-        return f"""### Instruction:
-{example['instruction']}
-
-### Response:
-{example['response']}"""
+def format_chatml(example):
+    """Format dataset example into ChatML format."""
+    # Handle conversational format (messages list)
+    if "messages" in example:
+        formatted = ""
+        for msg in example["messages"]:
+            role = msg["role"]
+            content = msg["content"]
+            formatted += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        return formatted
+    # Handle instruction/response format
+    elif "instruction" in example and "response" in example:
+        return f"""<|im_start|>user
+{example['instruction']}<|im_end|>
+<|im_start|>assistant
+{example['response']}<|im_end|>"""
     elif "text" in example:
         return example["text"]
     elif "prompt" in example and "completion" in example:
-        return f"{example['prompt']}{example['completion']}"
+        return f"<|im_start|>user\n{example['prompt']}<|im_end|>\n<|im_start|>assistant\n{example['completion']}<|im_end|>"
     else:
-        # For openassistant-guanaco format
         return example.get("text", str(example))
 
 
@@ -106,8 +119,9 @@ def train(
     max_seq_length: int = 2048,
     batch_size: int = 2,
     gradient_accumulation_steps: int = 4,
-    num_epochs: int = 3,
-    learning_rate: float = 2e-4,
+    num_epochs: int = 1,
+    learning_rate: float = 2e-5,
+    max_samples: int = 10000,
 ):
     """Run fine-tuning."""
     verify_gpu()
@@ -115,12 +129,29 @@ def train(
     # Load model
     model, tokenizer = load_model(model_name, max_seq_length)
 
+    # Add ChatML special tokens if not present
+    special_tokens = ["<|im_start|>", "<|im_end|>"]
+    tokens_to_add = [t for t in special_tokens if t not in tokenizer.get_vocab()]
+    if tokens_to_add:
+        tokenizer.add_special_tokens({"additional_special_tokens": tokens_to_add})
+        model.resize_token_embeddings(len(tokenizer))
+        print(f"Added special tokens: {tokens_to_add}")
+
     # Load dataset
     print(f"Loading dataset from: {dataset_path}")
     if dataset_path.endswith(".jsonl"):
         dataset = load_dataset("json", data_files=dataset_path, split="train")
     else:
-        dataset = load_dataset(dataset_path, split="train")
+        dataset = load_dataset(dataset_path, split="train_sft")
+
+    # Limit dataset size for faster training
+    if max_samples and len(dataset) > max_samples:
+        dataset = dataset.shuffle(seed=42).select(range(max_samples))
+        print(f"Using {max_samples} samples for training")
+
+    # Format dataset to ChatML
+    print("Formatting dataset to ChatML...")
+    dataset = dataset.map(lambda x: {"text": format_chatml(x)}, remove_columns=dataset.column_names)
 
     print(f"Dataset size: {len(dataset)} examples")
 
@@ -139,7 +170,7 @@ def train(
         weight_decay=0.01,
         lr_scheduler_type="linear",
         seed=42,
-        max_seq_length=max_seq_length,
+        max_length=max_seq_length,
         packing=False,
         dataset_text_field="text",
     )
@@ -147,7 +178,7 @@ def train(
     # Initialize trainer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=dataset,
         args=training_args,
     )
@@ -169,24 +200,25 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="mistralai/Mistral-7B-v0.1",
+        default="teknium/OpenHermes-2.5-Mistral-7B",
         help="Base model to fine-tune",
     )
     parser.add_argument(
         "--dataset",
         type=str,
-        required=True,
-        help="Path to training dataset (JSONL)",
+        default="HuggingFaceH4/ultrachat_200k",
+        help="HuggingFace dataset or path to JSONL",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="models/checkpoints",
+        default="models/openhermes-chat",
         help="Output directory for checkpoints",
     )
-    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
-    parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
+    parser.add_argument("--max-samples", type=int, default=10000, help="Max training samples (0 for all)")
 
     args = parser.parse_args()
 
@@ -197,6 +229,7 @@ def main():
         num_epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
+        max_samples=args.max_samples if args.max_samples > 0 else None,
     )
 
 

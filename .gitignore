@@ -14,7 +14,7 @@ dist/
 build/
 
 # Model checkpoints (large files)
-models/checkpoints/
+models/
 *.bin
 *.safetensors
 *.pt
@@ -31,6 +31,7 @@ data/processed/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 
