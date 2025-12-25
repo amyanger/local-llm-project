@@ -39,22 +39,11 @@ def respond(message, history):
     system_prompt = "You are a helpful, friendly assistant."
     messages = [{"role": "system", "content": system_prompt}]
 
-    # Add conversation history
-    for item in history:
-        if isinstance(item, dict):
-            # New Gradio format: {"role": "...", "content": "..."}
-            role = item.get("role", "user")
-            content = item.get("content", "")
-            # Content might be a list in some cases, extract text
-            if isinstance(content, list):
-                content = " ".join(str(c) for c in content)
-            messages.append({"role": role, "content": str(content)})
-        elif isinstance(item, (list, tuple)) and len(item) == 2:
-            # Old format: (user_msg, assistant_msg)
-            user_msg, assistant_msg = item
-            messages.append({"role": "user", "content": str(user_msg)})
-            if assistant_msg:
-                messages.append({"role": "assistant", "content": str(assistant_msg)})
+    # Add conversation history (tuple format: user_msg, assistant_msg)
+    for user_msg, assistant_msg in history:
+        messages.append({"role": "user", "content": str(user_msg)})
+        if assistant_msg:
+            messages.append({"role": "assistant", "content": str(assistant_msg)})
 
     # Add current message
     messages.append({"role": "user", "content": str(message)})
@@ -129,6 +118,7 @@ def main():
         title="Local LLM Chat",
         description="Chat with your fine-tuned OpenHermes model (QLoRA fine-tuned)",
         examples=["What is Python?", "Explain recursion", "Write a haiku about coding"],
+        type="tuples",
     )
 
     demo.launch(
