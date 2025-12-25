@@ -44,27 +44,31 @@ pip install -r requirements.txt
 ### Training
 
 ```bash
-# Fine-tune Mistral 7B on OpenAssistant dataset
-python src/train.py \
-    --model mistralai/Mistral-7B-v0.1 \
-    --dataset timdettmers/openassistant-guanaco \
-    --epochs 3
+# Fine-tune OpenHermes Mistral 7B on UltraChat dataset (default)
+python src/train.py
 
-# Or use your own dataset
+# Or customize the training
 python src/train.py \
-    --model mistralai/Mistral-7B-v0.1 \
+    --model teknium/OpenHermes-2.5-Mistral-7B \
+    --dataset HuggingFaceH4/ultrachat_200k \
+    --epochs 1 \
+    --max-samples 10000
+
+# Use your own dataset
+python src/train.py \
+    --model teknium/OpenHermes-2.5-Mistral-7B \
     --dataset data/raw/your_dataset.jsonl \
-    --epochs 5
+    --epochs 3
 ```
 
 ### Inference
 
 ```bash
 # Interactive chat mode
-python src/inference.py --model models/checkpoints
+python src/inference.py --model models/openhermes-chat
 
 # Single prompt
-python src/inference.py --model models/checkpoints --prompt "Explain quantum computing"
+python src/inference.py --model models/openhermes-chat --prompt "Explain quantum computing"
 ```
 
 ## Project Structure
@@ -108,12 +112,13 @@ Or use HuggingFace datasets with a `text` field directly.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--model` | `mistralai/Mistral-7B-v0.1` | Base model from HuggingFace |
-| `--dataset` | Required | Path to JSONL or HuggingFace dataset |
-| `--epochs` | 3 | Number of training epochs |
+| `--model` | `teknium/OpenHermes-2.5-Mistral-7B` | Base model from HuggingFace |
+| `--dataset` | `HuggingFaceH4/ultrachat_200k` | Path to JSONL or HuggingFace dataset |
+| `--epochs` | 1 | Number of training epochs |
 | `--batch-size` | 2 | Per-device batch size |
-| `--lr` | 2e-4 | Learning rate |
-| `--output` | `models/checkpoints` | Output directory |
+| `--lr` | 2e-5 | Learning rate |
+| `--max-samples` | 10000 | Max training samples (0 for all) |
+| `--output` | `models/openhermes-chat` | Output directory |
 
 ## Technical Details
 
