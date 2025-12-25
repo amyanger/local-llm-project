@@ -13,21 +13,75 @@ os.environ.setdefault("HF_HOME", str(Path(__file__).parent.parent / ".cache"))
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 import argparse
+import json
 import torch
-from unsloth import FastLanguageModel
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 def load_model(model_path: str, max_seq_length: int = 2048):
-    """Load fine-tuned model for inference."""
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_path,
-        max_seq_length=max_seq_length,
-        dtype=None,
-        load_in_4bit=True,
-    )
+    """Load fine-tuned LoRA model for inference."""
+    # Check if this is a LoRA adapter by looking for adapter_config.json
+    adapter_config_path = Path(model_path) / "adapter_config.json"
 
-    # Enable faster inference
-    FastLanguageModel.for_inference(model)
+    if adapter_config_path.exists():
+        # Load adapter config to get base model
+        with open(adapter_config_path) as f:
+            adapter_config = json.load(f)
+        base_model_name = adapter_config.get("base_model_name_or_path", "teknium/OpenHermes-2.5-Mistral-7B")
+        print(f"Loading base model: {base_model_name}")
+
+        # 4-bit quantization config
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+
+        # Load tokenizer from adapter first (has the special tokens)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Load base model
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model_name,
+            quantization_config=bnb_config,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+
+        # Resize embeddings if tokenizer has more tokens than model
+        if len(tokenizer) > model.config.vocab_size:
+            print(f"Resizing model embeddings from {model.config.vocab_size} to {len(tokenizer)}")
+            model.resize_token_embeddings(len(tokenizer))
+
+        # Load LoRA adapter
+        print(f"Loading LoRA adapter from: {model_path}")
+        model = PeftModel.from_pretrained(model, model_path)
+        model.eval()
+    else:
+        # Direct model loading (not a LoRA adapter)
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
 
     return model, tokenizer
 
@@ -41,7 +95,20 @@ def generate(
     system_prompt: str = "You are a helpful, friendly assistant.",
 ):
     """Generate response for a prompt using ChatML format."""
-    formatted_prompt = f"""<|im_start|>system
+    # Build messages for chat template
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+    # Use the tokenizer's chat template if available
+    if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template:
+        formatted_prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    else:
+        # Fallback to manual ChatML format
+        formatted_prompt = f"""<|im_start|>system
 {system_prompt}<|im_end|>
 <|im_start|>user
 {prompt}<|im_end|>
@@ -49,9 +116,6 @@ def generate(
 """
 
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to("cuda")
-
-    # Stop sequences for ChatML
-    stop_strings = ["<|im_start|>", "<|im_end|>", "<|im_start|>user"]
 
     with torch.no_grad():
         outputs = model.generate(
@@ -61,27 +125,14 @@ def generate(
             do_sample=True,
             top_p=0.9,
             top_k=40,
-            pad_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
             repetition_penalty=1.1,
         )
 
-    response = tokenizer.decode(outputs[0], skip_special_tokens=False)
-
-    # Extract assistant response from ChatML format
-    if "<|im_start|>assistant" in response:
-        response = response.split("<|im_start|>assistant")[-1]
-
-    # Clean up end tokens
-    if "<|im_end|>" in response:
-        response = response.split("<|im_end|>")[0]
-
-    # Remove any remaining special tokens
-    response = response.replace("<|im_start|>", "").replace("<|im_end|>", "")
-
-    # Cut off at any stop sequences
-    for stop in stop_strings:
-        if stop in response:
-            response = response.split(stop)[0]
+    # Decode only the new tokens (skip the input)
+    new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+    response = tokenizer.decode(new_tokens, skip_special_tokens=True)
 
     return response.strip()
 
