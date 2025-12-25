@@ -29,3 +29,6 @@ ipywidgets
 # Monitoring
 wandb
 tensorboard
+
+# Web UI
+gradio>=4.0.0

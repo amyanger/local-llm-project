@@ -71,13 +71,30 @@ python src/inference.py --model models/openhermes-chat
 python src/inference.py --model models/openhermes-chat --prompt "Explain quantum computing"
 ```
 
+### Web UI
+
+```bash
+# Launch Gradio chat interface (opens at http://localhost:7860)
+python src/app.py
+
+# With custom options
+python src/app.py --model models/openhermes-chat --port 7860 --share
+```
+
+The web UI provides:
+- Clean chat interface with conversation history
+- Adjustable generation parameters (temperature, max tokens, etc.)
+- Custom system prompts
+- Retry/regenerate functionality
+
 ## Project Structure
 
 ```
 local-llm-project/
 ├── src/
 │   ├── train.py          # QLoRA fine-tuning script
-│   └── inference.py      # Model inference and chat
+│   ├── inference.py      # Model inference and chat
+│   └── app.py            # Gradio web UI
 ├── data/
 │   ├── raw/              # Training datasets
 │   └── processed/        # Preprocessed data
@@ -171,7 +188,7 @@ Fine-tuning Mistral 7B on 10K instruction pairs:
 - [ ] Add DPO (Direct Preference Optimization) support
 - [ ] Implement evaluation benchmarks
 - [ ] Add multi-GPU training with DeepSpeed
-- [ ] Create web UI for inference
+- [x] Create web UI for inference
 - [ ] Support for vision-language models
 
 ## References
